@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import csv
+from functools import wraps
 from pathlib import Path
 import random
 import re
@@ -14,6 +15,8 @@ from playwright.async_api import (
 )
 from playwright_stealth import stealth_async
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import typer
+from typing_extensions import Annotated
 from unicaps import AsyncCaptchaSolver, CaptchaSolvingService
 
 plaintiff_re: re.Pattern[str] = re.compile(r".*DEMANDANTE:\s*([^.]*).*\.")
@@ -40,10 +43,20 @@ def convert_parties_to_dict_list(parties: list[str]) -> list[dict]:
     return [
         {
             "plaintiff": plaintiff_re.match(party).group(1).strip(),
-            "defendant": defendat_re.match(party).group(1).strip(),
+            "defendant": defendat_re.match(party).group(1).strip()
+            if defendat_re.match(party) is not None
+            else "",
         }
         for party in parties
     ]
+
+
+def typer_async(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+
+    return wrapper
 
 
 def save_dict_list_to_csv(dict_list, csv_file):
@@ -51,14 +64,18 @@ def save_dict_list_to_csv(dict_list, csv_file):
         return
 
     keys = dict_list[0].keys()
-    
-    with open(csv_file, 'w', newline='') as csvfile:
+
+    with open(csv_file, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=keys)
         writer.writeheader()
         writer.writerows(dict_list)
 
 
-async def main() -> None:
+@typer_async
+async def main(
+    year: Annotated[str, typer.Option(help="The year of the document")],
+    document_number: Annotated[str, typer.Option(help="The document number")],
+) -> None:
     settings: Settings = Settings()
     async with async_playwright() as p:
         browser: Browser = await p.chromium.launch()
@@ -98,9 +115,9 @@ async def main() -> None:
         )
         await page.locator("#especialidad").select_option("CIVIL")
 
-        await page.locator("#anio").select_option("2020")
+        await page.locator("#anio").select_option(year)
 
-        await page.locator("#numeroExpediente").fill("1000")
+        await page.locator("#numeroExpediente").fill(document_number)
 
         await page.wait_for_selector("#captcha_image")
         await page.locator("#captcha_image").screenshot(path="captcha.png")
@@ -123,9 +140,13 @@ async def main() -> None:
         # Wait for the webpage to load completely
         await page.wait_for_load_state("load")
 
-        parties: list[str] = await page.evaluate("Array.from(document.getElementsByName('partesp'), element => element.textContent)")
+        parties: list[str] = await page.evaluate(
+            "Array.from(document.getElementsByName('partesp'), element => element.textContent)"
+        )
         if len(parties) == 0:
-            parties: list[str] = await page.evaluate("Array.from(document.getElementsByClassName('partesp'), element => element.textContent)")
+            parties: list[str] = await page.evaluate(
+                "Array.from(document.getElementsByClassName('partesp'), element => element.textContent)"
+            )
 
         parties: list[str] = clean_parties(parties)
 
@@ -142,4 +163,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    typer.run(main)
