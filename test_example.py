@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import asyncio
+import csv
 from pathlib import Path
 import random
+import re
 import string
 
 from playwright.async_api import (
@@ -14,6 +16,9 @@ from playwright_stealth import stealth_async
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from unicaps import AsyncCaptchaSolver, CaptchaSolvingService
 
+plaintiff_re: re.Pattern[str] = re.compile(r".*DEMANDANTE:\s*([^.]*).*\.")
+defendat_re: re.Pattern[str] = re.compile(r".*DEMANDADO:\s*([^.]*).*\.")
+
 
 class Settings(BaseSettings):
     anti_captcha_api_key: str = ""
@@ -25,6 +30,32 @@ class Settings(BaseSettings):
 def generate_random_string():
     characters = string.ascii_lowercase + string.digits
     return "".join(random.choice(characters) for _ in range(10))
+
+
+def clean_parties(parties: list[str]) -> list[str]:
+    return [party.strip() for party in parties]
+
+
+def convert_parties_to_dict_list(parties: list[str]) -> list[dict]:
+    return [
+        {
+            "plaintiff": plaintiff_re.match(party).group(1).strip(),
+            "defendant": defendat_re.match(party).group(1).strip(),
+        }
+        for party in parties
+    ]
+
+
+def save_dict_list_to_csv(dict_list, csv_file):
+    if not dict_list:
+        return
+
+    keys = dict_list[0].keys()
+    
+    with open(csv_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(dict_list)
 
 
 async def main() -> None:
@@ -91,6 +122,16 @@ async def main() -> None:
 
         # Wait for the webpage to load completely
         await page.wait_for_load_state("load")
+
+        parties: list[str] = await page.evaluate("Array.from(document.getElementsByName('partesp'), element => element.textContent)")
+        if len(parties) == 0:
+            parties: list[str] = await page.evaluate("Array.from(document.getElementsByClassName('partesp'), element => element.textContent)")
+
+        parties: list[str] = clean_parties(parties)
+
+        parties_dicts: list[dict] = convert_parties_to_dict_list(parties)
+
+        save_dict_list_to_csv(parties_dicts, "parties.csv")
 
         # Take a screenshot
         screenshot_filename: str = "pj.png"
