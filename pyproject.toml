@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "playwright-test"
+version = "0.1.0"
+description = "Peruvian Judicial Form By-Pass Proof-of-Concept"
+authors = ["Jean-Pierre Chauvel <jean.p.chauvel@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+playwright = "^1.41.1"
+playwright-stealth = "^1.0.6"
+setuptools = "^70.0.0"
+unicaps = "^1.3.0"
+pydantic = "^2.7.1"
+pydantic-settings = "^2.2.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.12.1"
+isort = "^5.13.2"
+mypy = "^1.8.0"
+pytest-playwright = "^0.4.3"
+
+[tool.black]
+line-length = 79
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
