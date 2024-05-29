@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 import asyncio
+from datetime import datetime
 from functools import lru_cache, wraps
 from pathlib import Path
 
 import aiocsv
 import aiofiles
 import typer
-from playwright.async_api import (Browser, BrowserContext, Page,
-                                  async_playwright)
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    async_playwright,
+)
 from playwright_stealth import stealth_async
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rand_useragent import randua
@@ -31,6 +36,7 @@ FIELDS = [
 class Settings(BaseSettings):
     anti_captcha_api_key_path: str = ""
     url: str = ""
+    since: int = 0
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -250,34 +256,48 @@ async def worker(
             incoming_queue.task_done()
 
 
-async def progress_bar(
-    queue: asyncio.Queue[bool], document_range: int
-) -> None:
-    for _ in track(range(document_range)):
+async def progress_bar(queue: asyncio.Queue[bool], steps: int) -> None:
+    for _ in track(range(steps)):
         await queue.get()
         queue.task_done()
 
 
+def get_year(year: str) -> int:
+    if year == "current":
+        return datetime.now().year
+    return int(year)
+
+
 @typer_async
 async def main(
-    year: Annotated[str, typer.Option(help="The year of the document")],
     document_number_start: Annotated[
         int, typer.Option(help="The document start number")
     ],
     document_range: Annotated[int, typer.Option(help="The document range")],
+    until_year: Annotated[
+        str, typer.Option(help="Process until this year")
+    ] = "current",
     output_file: Annotated[
         str, typer.Option(help="The output file")
     ] = "output.csv",
+    num_workers: Annotated[
+        int, typer.Option(help="The number of workers")
+    ] = 5
 ) -> None:
     await write_header_to_csv(output_file)
+    settings: Settings = get_settings()
+
+    now = get_year(until_year)
     incoming_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()
     progress_bar_queue: asyncio.Queue[bool] = asyncio.Queue()
-    for i in range(document_range):
-        incoming_queue.put_nowait(
-            (str(document_number_start + i), year, output_file)
-        )
+
+    for year in range(settings.since, now + 1):
+        for i in range(document_range):
+            incoming_queue.put_nowait(
+                (str(document_number_start + i), str(year), output_file)
+            )
     tasks: list[asyncio.Task[None]] = []
-    for _ in range(5):
+    for _ in range(num_workers):
         task: asyncio.Task[None] = asyncio.create_task(
             coro=worker(
                 incoming_queue=incoming_queue,
@@ -289,7 +309,8 @@ async def main(
     # Start progress bar
     progress_bar_task: asyncio.Task[None] = asyncio.create_task(
         coro=progress_bar(
-            queue=progress_bar_queue, document_range=document_range
+            queue=progress_bar_queue,
+            steps=document_range * (now - settings.since + 1),
         )
     )
     tasks.append(progress_bar_task)
