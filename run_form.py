@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import asyncio
-import csv
 from functools import wraps
 from pathlib import Path
 
+import aiofiles
+import aiocsv
 from rand_useragent import randua
 from playwright.async_api import (
     Browser,
@@ -90,17 +91,19 @@ def convert_data_to_dict(data: list[str]) -> dict[str, str]:
     }
 
 
-def save_dict_to_csv(
+async def save_dict_to_csv(
     row: dict[str, str], csv_file, write_header: bool = False
 ) -> None:
     if not row:
         return
 
-    with open(csv_file, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=row.keys())
+    async with aiofiles.open(csv_file, "a", newline="") as csvfile:
+        writer: aiocsv.AsyncDictWriter = aiocsv.AsyncDictWriter(
+            csvfile, fieldnames=row.keys()
+        )
         if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+            await writer.writeheader()
+        await writer.writerow(row)
 
 
 @typer_async
@@ -155,18 +158,19 @@ async def main(
         await page.locator("#numeroExpediente").fill(document_number)
 
         await page.wait_for_selector("#captcha_image")
-        await page.locator("#captcha_image").screenshot(path="captcha.png")
 
-        async with AsyncCaptchaSolver(
-            CaptchaSolvingService.ANTI_CAPTCHA, settings.anti_captcha_api_key
-        ) as solver:
-            solved = await solver.solve_image_captcha(
-                Path("captcha.png"),
-                is_phrase=False,
-                is_case_sensitive=False,
-            )
-            await page.locator("#codigoCaptcha").fill(solved.solution.text)
-            await solved.report_good()
+        async with aiofiles.tempfile.NamedTemporaryFile() as tmpfile:
+            await page.locator("#captcha_image").screenshot(path=tmpfile.name)
+            async with AsyncCaptchaSolver(
+                CaptchaSolvingService.ANTI_CAPTCHA, settings.anti_captcha_api_key
+            ) as solver:
+                solved = await solver.solve_image_captcha(
+                    Path(tmpfile.name),
+                    is_phrase=False,
+                    is_case_sensitive=False,
+                )
+                await page.locator("#codigoCaptcha").fill(solved.solution.text)
+                await solved.report_good()
 
         await page.locator("#consultarExpedientes").click()
 
@@ -184,7 +188,9 @@ async def main(
                 == "Ver detalle de expediente"
             ):
                 await buttons[i].click()
+
                 await asyncio.sleep(2)
+
                 # Wait for the webpage to load completely
                 await page.wait_for_load_state("load")
 
@@ -194,12 +200,13 @@ async def main(
                 parties_content: str | None = await page.locator(
                     "div#collapseTwo"
                 ).text_content()
+
                 if header_content is not None and parties_content is not None:
                     cleaned_header: list[str] = clean_header(header_content)
                     cleaned_parties: list[str] = clean_parties(parties_content)
                     data: list[str] = cleaned_header + cleaned_parties
                     converted_data: dict[str, str] = convert_data_to_dict(data)
-                    save_dict_to_csv(converted_data, output_file, i == 0)
+                    await save_dict_to_csv(converted_data, output_file, i == 0)
 
                 await asyncio.sleep(2)
 
@@ -216,8 +223,8 @@ async def main(
                 i += 1
 
         ## Take a screenshot
-        #screenshot_filename: str = "pj.png"
-        #await page.screenshot(path=screenshot_filename)
+        # screenshot_filename: str = "pj.png"
+        # await page.screenshot(path=screenshot_filename)
 
         # Close the browser
         await browser.close()
