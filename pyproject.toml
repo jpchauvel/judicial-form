@@ -14,6 +14,9 @@ unicaps = "^1.3.0"
 pydantic = "^2.7.1"
 pydantic-settings = "^2.2.1"
 typer = "^0.12.3"
+aiofiles = "^23.2.1"
+rand-useragent = "^0.2.0"
+undetected-playwright = "^0.3.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.1"
