@@ -5,12 +5,13 @@ from pathlib import Path
 
 import aiocsv
 import aiofiles
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+import typer
+from playwright.async_api import (Browser, BrowserContext, Page,
+                                  async_playwright)
 from playwright_stealth import stealth_async
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rand_useragent import randua
 from rich.progress import track
-import typer
 from typing_extensions import Annotated
 from undetected_playwright import Malenia
 from unicaps import AsyncCaptchaSolver, CaptchaSolvingService
@@ -115,9 +116,9 @@ async def save_dict_to_csv(row: dict[str, str], csv_file) -> None:
 
 
 async def worker(
-        incoming_queue: asyncio.Queue[tuple[str, str, str]],
-        outgoing_queue: asyncio.Queue[bool],
-        ) -> None:
+    incoming_queue: asyncio.Queue[tuple[str, str, str]],
+    progress_bar_queue: asyncio.Queue[bool],
+) -> None:
     while True:
         document_number, year, output_file = await incoming_queue.get()
         settings: Settings = get_settings()
@@ -166,7 +167,9 @@ async def worker(
             await page.wait_for_selector("#captcha_image")
 
             async with aiofiles.tempfile.NamedTemporaryFile() as tmpfile:
-                await page.locator("#captcha_image").screenshot(path=tmpfile.name)
+                await page.locator("#captcha_image").screenshot(
+                    path=tmpfile.name
+                )
                 async with AsyncCaptchaSolver(
                     CaptchaSolvingService.ANTI_CAPTCHA,
                     settings.anti_captcha_api_key,
@@ -176,7 +179,9 @@ async def worker(
                         is_phrase=False,
                         is_case_sensitive=False,
                     )
-                    await page.locator("#codigoCaptcha").fill(solved.solution.text)
+                    await page.locator("#codigoCaptcha").fill(
+                        solved.solution.text
+                    )
                     await solved.report_good()
 
             await page.locator("#consultarExpedientes").click()
@@ -208,11 +213,20 @@ async def worker(
                         "div#collapseTwo"
                     ).text_content()
 
-                    if header_content is not None and parties_content is not None:
-                        cleaned_header: list[str] = clean_header(header_content)
-                        cleaned_parties: list[str] = clean_parties(parties_content)
+                    if (
+                        header_content is not None
+                        and parties_content is not None
+                    ):
+                        cleaned_header: list[str] = clean_header(
+                            header_content
+                        )
+                        cleaned_parties: list[str] = clean_parties(
+                            parties_content
+                        )
                         data: list[str] = cleaned_header + cleaned_parties
-                        converted_data: dict[str, str] = convert_data_to_dict(data)
+                        converted_data: dict[str, str] = convert_data_to_dict(
+                            data
+                        )
                         await save_dict_to_csv(converted_data, output_file)
 
                     await asyncio.sleep(1)
@@ -232,11 +246,13 @@ async def worker(
 
             # Close the browser
             await browser.close()
-            await outgoing_queue.put(True)
+            await progress_bar_queue.put(True)
             incoming_queue.task_done()
 
 
-async def progress_bar(queue: asyncio.Queue[bool], document_range: int) -> None:
+async def progress_bar(
+    queue: asyncio.Queue[bool], document_range: int
+) -> None:
     for _ in track(range(document_range)):
         await queue.get()
         queue.task_done()
@@ -245,7 +261,9 @@ async def progress_bar(queue: asyncio.Queue[bool], document_range: int) -> None:
 @typer_async
 async def main(
     year: Annotated[str, typer.Option(help="The year of the document")],
-    document_number_start: Annotated[int, typer.Option(help="The document start number")],
+    document_number_start: Annotated[
+        int, typer.Option(help="The document start number")
+    ],
     document_range: Annotated[int, typer.Option(help="The document range")],
     output_file: Annotated[
         str, typer.Option(help="The output file")
@@ -253,25 +271,32 @@ async def main(
 ) -> None:
     await write_header_to_csv(output_file)
     incoming_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()
-    outgoing_queue: asyncio.Queue[bool] = asyncio.Queue()
+    progress_bar_queue: asyncio.Queue[bool] = asyncio.Queue()
     for i in range(document_range):
-        incoming_queue.put_nowait((str(document_number_start + i), year, output_file))
+        incoming_queue.put_nowait(
+            (str(document_number_start + i), year, output_file)
+        )
     tasks: list[asyncio.Task[None]] = []
     for _ in range(5):
         task: asyncio.Task[None] = asyncio.create_task(
-            coro=worker(incoming_queue=incoming_queue, outgoing_queue=outgoing_queue)
+            coro=worker(
+                incoming_queue=incoming_queue,
+                progress_bar_queue=progress_bar_queue,
+            )
         )
         tasks.append(task)
 
     # Start progress bar
     progress_bar_task: asyncio.Task[None] = asyncio.create_task(
-        coro=progress_bar(queue=outgoing_queue, document_range=document_range)
+        coro=progress_bar(
+            queue=progress_bar_queue, document_range=document_range
+        )
     )
     tasks.append(progress_bar_task)
 
     # Wait until the queue is fully processed
     await incoming_queue.join()
-    await outgoing_queue.join()
+    await progress_bar_queue.join()
 
     for task in tasks:
         task.cancel()
