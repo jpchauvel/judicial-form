@@ -65,9 +65,6 @@ async def sync_workers(
         count: int = get_num_workers()
         threshold: int = math.ceil(count * settings.threshold)
         await vpn_api.rotate_vpn()  # Rotate VPN
-        if settings.with_garbage_collection:
-            logger.debug("Garbage collection initiated...")
-            gc.collect()
 
 
 async def worker(
@@ -85,8 +82,8 @@ async def worker(
     worker_id: UUID = uuid4()
     logger.debug(f"Worker {worker_id} started.")
     try:
+        settings: Settings = get_settings()
         async with async_playwright() as p:
-            settings: Settings = get_settings()
             browser = await p.firefox.launch(headless=settings.headless)
             while True:
                 try:
@@ -257,6 +254,11 @@ async def worker(
                         input_queue.task_done()
                         await input_queue.put((document_number, year))
                         await cancelled_workers_queue.put(True)
+                finally:
+                    if settings.with_garbage_collection:
+                        logger.debug("Garbage collection initiated...")
+                        gc.collect()
+
 
     except asyncio.CancelledError:
         logger.debug(f"Worker {worker_id} was cancelled.")
