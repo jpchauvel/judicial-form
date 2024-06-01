@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import logging
 from functools import wraps
 
 import typer
@@ -7,10 +8,20 @@ from rich.progress import track
 from typing_extensions import Annotated
 
 from conf import Settings, get_settings
+from expressvpn import AsyncExpressVpnApi
 from util import get_year, write_header_to_csv
 from worker import set_num_workers, sync_workers, worker
 
-from expressvpn import AsyncExpressVpnApi
+# Configure the root logger
+logger: logging.Logger = logging.getLogger(__name__)
+
+# Configure the asyncio logger
+asyncio_logger: logging.Logger = logging.getLogger("asyncio")
+asyncio_logger.setLevel(logging.WARNING)
+
+# Configure the httpx logger
+httpx_logger: logging.Logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.WARNING)
 
 
 def typer_async(f):
@@ -24,7 +35,7 @@ def typer_async(f):
 async def progress_bar(event: asyncio.Event, steps: int) -> None:
     for _ in track(range(steps)):
         await event.wait()
-        event.clear() 
+        event.clear()
 
 
 @typer_async
@@ -46,9 +57,12 @@ async def main(
         bool, typer.Option(help="Disable progress bar")
     ] = False,
 ) -> None:
-    global workers
     await write_header_to_csv(output_file)
     settings: Settings = get_settings()
+    # Configure the root logger's level
+    logging.basicConfig(
+        level=logging.DEBUG if settings.debug else logging.INFO
+    )
 
     now: int = get_year(until_year)
     input_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
@@ -58,14 +72,12 @@ async def main(
 
     for year in range(settings.since, now + 1):
         for i in range(document_range):
-            input_queue.put_nowait(
-                (str(document_number_start + i), str(year))
-            )
+            input_queue.put_nowait((str(document_number_start + i), str(year)))
 
     tasks: list[asyncio.Task[None]] = []
 
-    async with AsyncExpressVpnApi() as vpn_api:
-        await vpn_api.rotate_vpn() # First rotation
+    async with AsyncExpressVpnApi(logger=logger) as vpn_api:
+        await vpn_api.rotate_vpn()  # First rotation
 
         # Start workers
         for _ in range(num_workers):
@@ -76,6 +88,7 @@ async def main(
                     sync_workers_event=sync_workers_event,
                     progress_bar_event=progress_bar_event,
                     output_file=output_file,
+                    logger=logger,
                 )
             )
             tasks.append(worker_task)
@@ -88,6 +101,7 @@ async def main(
                 vpn_api=vpn_api,
                 cancelled_workers_queue=cancelled_workers_queue,
                 sync_workers_event=sync_workers_event,
+                logger=logger,
             )
         )
         tasks.append(sync_workers_task)

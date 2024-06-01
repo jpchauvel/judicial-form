@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     delay_after_click: int = 0
     threshold: float = 0.0
     headless: bool = True
+    with_garbage_collection: bool = False
+    debug: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
 

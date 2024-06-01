@@ -1,15 +1,13 @@
 import asyncio
+import gc
+import logging
 import math
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import aiofiles
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    TimeoutError,
-    async_playwright,
-)
+from playwright.async_api import (Browser, BrowserContext, Page, TimeoutError,
+                                  async_playwright)
 from playwright_stealth import stealth_async
 from rand_useragent import randua
 from undetected_playwright import Malenia
@@ -17,12 +15,8 @@ from unicaps import AsyncCaptchaSolver, CaptchaSolvingService
 
 from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi
-from util import (
-    clean_header,
-    clean_parties,
-    convert_data_to_dict,
-    save_dict_to_csv,
-) 
+from util import (clean_header, clean_parties, convert_data_to_dict,
+                  save_dict_to_csv)
 
 _num_workers: int = 0
 
@@ -46,10 +40,12 @@ async def sync_workers(
     vpn_api: AsyncExpressVpnApi,
     cancelled_workers_queue: asyncio.Queue[bool],
     sync_workers_event: asyncio.Event,
+    logger: logging.Logger,
 ) -> None:
+    logger.debug("Worker synchronizer started.")
     settings: Settings = get_settings()
     count: int = get_num_workers()
-    threshold: int = math.ceil(count* settings.threshold)
+    threshold: int = math.ceil(count * settings.threshold)
     while True:
         while count >= threshold:
             sync_workers_event.set()
@@ -61,9 +57,17 @@ async def sync_workers(
             except asyncio.QueueEmpty:
                 pass
             await asyncio.sleep(0.1)
+        logger.debug(
+            f"Threshold reached."
+            f" Total workers remaining: {get_num_workers()}."
+            f" Threshold: {threshold}."
+        )
         count: int = get_num_workers()
-        threshold: int = math.ceil(count* settings.threshold)
+        threshold: int = math.ceil(count * settings.threshold)
         await vpn_api.rotate_vpn()  # Rotate VPN
+        if settings.with_garbage_collection:
+            logger.debug("Garbage collection initiated...")
+            gc.collect()
 
 
 async def worker(
@@ -72,11 +76,14 @@ async def worker(
     sync_workers_event: asyncio.Event,
     progress_bar_event: asyncio.Event,
     output_file: str,
+    logger: logging.Logger,
 ) -> None:
     document_number: str | None = None
     year: str | None = None
     browser: Browser | None = None
     task_done: bool | None = None
+    worker_id: UUID = uuid4()
+    logger.debug(f"Worker {worker_id} started.")
     try:
         async with async_playwright() as p:
             settings: Settings = get_settings()
@@ -115,16 +122,18 @@ async def worker(
                             document.querySelector('#organoJurisdiccional option[value="16133"]')
                         """
                         )
-                        await page.locator("#organoJurisdiccional").select_option(
-                            "JUZGADO DE PAZ LETRADO"
-                        )
+                        await page.locator(
+                            "#organoJurisdiccional"
+                        ).select_option("JUZGADO DE PAZ LETRADO")
 
                         await page.wait_for_function(
                             """
                             document.querySelector('#especialidad option[value="97880"]')
                         """
                         )
-                        await page.locator("#especialidad").select_option("CIVIL")
+                        await page.locator("#especialidad").select_option(
+                            "CIVIL"
+                        )
 
                         await page.locator("#anio").select_option(year)
 
@@ -176,12 +185,16 @@ async def worker(
                                 # Wait for the webpage to load completely
                                 await page.wait_for_load_state("load")
 
-                                header_content: str | None = await page.locator(
-                                    "div#gridRE"
-                                ).text_content()
-                                parties_content: str | None = await page.locator(
-                                    "div#collapseTwo"
-                                ).text_content()
+                                header_content: str | None = (
+                                    await page.locator(
+                                        "div#gridRE"
+                                    ).text_content()
+                                )
+                                parties_content: str | None = (
+                                    await page.locator(
+                                        "div#collapseTwo"
+                                    ).text_content()
+                                )
 
                                 if (
                                     header_content is not None
@@ -219,25 +232,40 @@ async def worker(
                                 buttons_length: int = len(buttons)
                                 i += 1
 
+                        logger.debug(
+                            f"Worker {worker_id} finished processing"
+                            f" {document_number} {year}."
+                        )
                         progress_bar_event.set()
                         input_queue.task_done()
                         task_done = True
 
                     except TimeoutError:
+                        logger.debug(f"Worker {worker_id} timed out.")
                         if document_number is not None and year is not None:
                             input_queue.task_done()
                             await input_queue.put((document_number, year))
                             await cancelled_workers_queue.put(True)
 
-                except Exception:
+                except Exception as err:
                     # FIXME: Catchall exception
+                    logger.debug(
+                        f"Worker {worker_id} ended with an exception."
+                    )
+                    logger.debug("Exception: ", exc_info=err)
                     if document_number is not None and year is not None:
                         input_queue.task_done()
                         await input_queue.put((document_number, year))
                         await cancelled_workers_queue.put(True)
 
     except asyncio.CancelledError:
-        if task_done is not None and not task_done and document_number is not None and year is not None:
+        logger.debug(f"Worker {worker_id} was cancelled.")
+        if (
+            task_done is not None
+            and not task_done
+            and document_number is not None
+            and year is not None
+        ):
             input_queue.task_done()
             await input_queue.put((document_number, year))
             await cancelled_workers_queue.put(True)
