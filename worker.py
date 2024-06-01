@@ -259,7 +259,6 @@ async def worker(
                         logger.debug("Garbage collection initiated...")
                         gc.collect()
 
-
     except asyncio.CancelledError:
         logger.debug(f"Worker {worker_id} was cancelled.")
         if (

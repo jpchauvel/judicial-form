@@ -1,8 +1,8 @@
 #!/usr/bin/env python3 -X tracemalloc=25
 import asyncio
 import logging
-from functools import wraps
 import tracemalloc
+from functools import wraps
 
 import typer
 from rich.progress import track
