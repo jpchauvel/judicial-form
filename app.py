@@ -10,6 +10,7 @@ from typing_extensions import Annotated
 
 from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi
+from scraper import scraper
 from util import get_year, write_header_to_csv
 from worker import set_num_workers, sync_workers, worker
 
@@ -108,6 +109,7 @@ async def main(
                     progress_bar_event=progress_bar_event,
                     output_file=output_file,
                     logger=logger,
+                    scraper=scraper,
                 )
             )
             tasks.append(worker_task)
