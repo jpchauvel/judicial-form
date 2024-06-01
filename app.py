@@ -1,7 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3 -X tracemalloc=25
 import asyncio
 import logging
 from functools import wraps
+import tracemalloc
 
 import typer
 from rich.progress import track
@@ -38,6 +39,17 @@ async def progress_bar(event: asyncio.Event, steps: int) -> None:
         event.clear()
 
 
+async def memory_profiler(logger: logging.Logger) -> None:
+    settings: Settings = get_settings()
+    tracemalloc.start()
+    while True:
+        await asyncio.sleep(settings.memory_profiler_frequency_in_seconds)
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics("lineno")
+        for stat in top_stats[:10]:
+            logger.info(stat)
+
+
 @typer_async
 async def main(
     document_number_start: Annotated[
@@ -57,8 +69,17 @@ async def main(
         bool, typer.Option(help="Disable progress bar")
     ] = False,
 ) -> None:
-    await write_header_to_csv(output_file)
     settings: Settings = get_settings()
+    tasks: list[asyncio.Task[None]] = []
+
+    if settings.with_memory_profiler:
+        # Start memory profiler
+        memory_profiler_task: asyncio.Task[None] = asyncio.create_task(
+            coro=memory_profiler(logger=logger)
+        )
+        tasks.append(memory_profiler_task)
+
+    await write_header_to_csv(output_file)
     # Configure the root logger's level
     logging.basicConfig(
         level=logging.DEBUG if settings.debug else logging.INFO
@@ -73,8 +94,6 @@ async def main(
     for year in range(settings.since, now + 1):
         for i in range(document_range):
             input_queue.put_nowait((str(document_number_start + i), str(year)))
-
-    tasks: list[asyncio.Task[None]] = []
 
     async with AsyncExpressVpnApi(logger=logger) as vpn_api:
         await vpn_api.rotate_vpn()  # First rotation

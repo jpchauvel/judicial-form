@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     headless: bool = True
     with_garbage_collection: bool = False
     debug: bool = False
+    with_memory_profiler: bool = False
+    memory_profiler_frequency_in_seconds: int = 0
 
     model_config = SettingsConfigDict(env_file=".env")
 
