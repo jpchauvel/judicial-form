@@ -5,7 +5,7 @@ import math
 from collections.abc import Awaitable, Callable
 from uuid import UUID, uuid4
 
-from playwright.async_api import Browser, async_playwright
+from playwright.async_api import Browser, async_playwright, TimeoutError
 
 from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi

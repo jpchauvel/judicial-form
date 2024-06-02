@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 import aiofiles
-from playwright.async_api import Browser, BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page, expect
 from playwright_stealth import stealth_async
 from rand_useragent import randua
 from undetected_playwright import Malenia
@@ -22,103 +22,117 @@ async def scraper(
 
     # Create  a new context and page
     context: BrowserContext = await browser.new_context(user_agent=randua())
-    await Malenia.apply_stealth(context)
 
-    page: Page = await context.new_page()
+    try:
+        await Malenia.apply_stealth(context)
 
-    # Apply the stealth settings
-    await stealth_async(page)
+        page: Page = await context.new_page()
 
-    # Navigate to the page
-    await page.goto(settings.url)
+        # Apply the stealth settings
+        await stealth_async(page)
 
-    page.set_default_timeout(settings.timeout)
+        # Navigate to the page
+        await page.goto(settings.url)
 
-    # Wait for the webpage to load completely
-    await page.wait_for_load_state("load")
+        page.set_default_timeout(settings.timeout)
 
-    await page.locator("#distritoJudicial").select_option("LIMA")
+        # Wait for the webpage to load completely
+        await page.wait_for_load_state("load")
 
-    await page.wait_for_function(
+        await page.locator("#distritoJudicial").select_option("LIMA")
+
+        await page.wait_for_function(
+            """
+            document.querySelector('#organoJurisdiccional option[value="16133"]')
         """
-        document.querySelector('#organoJurisdiccional option[value="16133"]')
-    """
-    )
-    await page.locator("#organoJurisdiccional").select_option(
-        "JUZGADO DE PAZ LETRADO"
-    )
+        )
+        await page.locator("#organoJurisdiccional").select_option(
+            "JUZGADO DE PAZ LETRADO"
+        )
 
-    await page.wait_for_function(
+        await page.wait_for_function(
+            """
+            document.querySelector('#especialidad option[value="97880"]')
         """
-        document.querySelector('#especialidad option[value="97880"]')
-    """
-    )
-    await page.locator("#especialidad").select_option("CIVIL")
+        )
+        await page.locator("#especialidad").select_option("CIVIL")
 
-    await page.locator("#anio").select_option(year)
+        await page.locator("#anio").select_option(year)
 
-    await page.locator("#numeroExpediente").fill(document_number)
+        await page.locator("#numeroExpediente").fill(document_number)
 
-    await page.wait_for_selector("#captcha_image")
+        await page.wait_for_selector("#captcha_image")
 
-    async with aiofiles.tempfile.NamedTemporaryFile() as tmpfile:
-        await page.locator("#captcha_image").screenshot(path=tmpfile.name)
-        async with AsyncCaptchaSolver(
-            CaptchaSolvingService.ANTI_CAPTCHA,
-            settings.anti_captcha_api_key,
-        ) as solver:
-            solved = await solver.solve_image_captcha(
-                Path(tmpfile.name),
-                is_phrase=False,
-                is_case_sensitive=False,
-            )
-            await page.locator("#codigoCaptcha").fill(solved.solution.text)
-            await solved.report_good()
+        passed = False
+        while not passed:
+            async with aiofiles.tempfile.NamedTemporaryFile() as tmpfile:
+                await page.locator("#captcha_image").screenshot(path=tmpfile.name)
+                async with AsyncCaptchaSolver(
+                    CaptchaSolvingService.ANTI_CAPTCHA,
+                    settings.anti_captcha_api_key,
+                ) as solver:
+                    solved = await solver.solve_image_captcha(
+                        Path(tmpfile.name),
+                        is_phrase=False,
+                        is_case_sensitive=False,
+                    )
+                    await page.locator("#codigoCaptcha").fill(solved.solution.text)
 
-    await page.locator("#consultarExpedientes").click()
+                    await page.locator("#consultarExpedientes").click()
+                    
+                    try:
+                        await expect(page.get_by_text("Ingrese el Codigo de Captcha Correcto")).to_be_visible()
+                    except AssertionError:
+                        await solved.report_good()
+                        passed = True
+                    else:
+                        passed = False
 
-    await asyncio.sleep(settings.delay_after_click)
 
-    # Wait for the webpage to load completely
-    await page.wait_for_load_state("load")
+        await asyncio.sleep(settings.delay_after_click)
 
-    buttons: list = await page.locator("div#divDetalles button").all()
-    buttons_length: int = len(buttons)
-    i: int = 0
-    while i < buttons_length:
-        if (
-            await buttons[i].get_attribute("title")
-            == "Ver detalle de expediente"
-        ):
-            await buttons[i].click()
+        # Wait for the webpage to load completely
+        await page.wait_for_load_state("load")
 
-            await asyncio.sleep(settings.delay_after_click)
+        buttons: list = await page.locator("div#divDetalles button").all()
+        buttons_length: int = len(buttons)
+        i: int = 0
+        while i < buttons_length:
+            if (
+                await buttons[i].get_attribute("title")
+                == "Ver detalle de expediente"
+            ):
+                await buttons[i].click()
 
-            # Wait for the webpage to load completely
-            await page.wait_for_load_state("load")
+                await asyncio.sleep(settings.delay_after_click)
 
-            header_content: str | None = await page.locator(
-                "div#gridRE"
-            ).text_content()
-            parties_content: str | None = await page.locator(
-                "div#collapseTwo"
-            ).text_content()
+                # Wait for the webpage to load completely
+                await page.wait_for_load_state("load")
 
-            if header_content is not None and parties_content is not None:
-                cleaned_header: list[str] = clean_header(header_content)
-                cleaned_parties: list[str] = clean_parties(parties_content)
-                data: list[str] = cleaned_header + cleaned_parties
-                converted_data: dict[str, str] = convert_data_to_dict(data)
-                await save_dict_to_csv(converted_data, output_file)
+                header_content: str | None = await page.locator(
+                    "div#gridRE"
+                ).text_content()
+                parties_content: str | None = await page.locator(
+                    "div#collapseTwo"
+                ).text_content()
 
-            anchors: list = await page.locator("div#divCuerpo a").all()
-            await anchors[0].click()
+                if header_content is not None and parties_content is not None:
+                    cleaned_header: list[str] = clean_header(header_content)
+                    cleaned_parties: list[str] = clean_parties(parties_content)
+                    data: list[str] = cleaned_header + cleaned_parties
+                    converted_data: dict[str, str] = convert_data_to_dict(data)
+                    await save_dict_to_csv(converted_data, output_file)
 
-            await asyncio.sleep(settings.delay_after_click)
+                anchors: list = await page.locator("div#divCuerpo a").all()
+                await anchors[0].click()
 
-            # Wait for the webpage to load completely
-            await page.wait_for_load_state("load")
+                await asyncio.sleep(settings.delay_after_click)
 
-            buttons: list = await page.locator("div#divDetalles button").all()
-            buttons_length: int = len(buttons)
-            i += 1
+                # Wait for the webpage to load completely
+                await page.wait_for_load_state("load")
+
+                buttons: list = await page.locator("div#divDetalles button").all()
+                buttons_length: int = len(buttons)
+                i += 1
+    finally:
+        await context.close()
