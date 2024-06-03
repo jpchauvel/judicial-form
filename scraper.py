@@ -66,7 +66,9 @@ async def scraper(
         passed = False
         while not passed:
             async with aiofiles.tempfile.NamedTemporaryFile() as tmpfile:
-                await page.locator("#captcha_image").screenshot(path=tmpfile.name)
+                await page.locator("#captcha_image").screenshot(
+                    path=tmpfile.name
+                )
                 async with AsyncCaptchaSolver(
                     CaptchaSolvingService.ANTI_CAPTCHA,
                     settings.anti_captcha_api_key,
@@ -76,18 +78,23 @@ async def scraper(
                         is_phrase=False,
                         is_case_sensitive=False,
                     )
-                    await page.locator("#codigoCaptcha").fill(solved.solution.text)
+                    await page.locator("#codigoCaptcha").fill(
+                        solved.solution.text
+                    )
 
                     await page.locator("#consultarExpedientes").click()
-                    
+
                     try:
-                        await expect(page.get_by_text("Ingrese el Codigo de Captcha Correcto")).to_be_visible()
+                        await expect(
+                            page.get_by_text(
+                                "Ingrese el Codigo de Captcha Correcto"
+                            )
+                        ).to_be_visible()
                     except AssertionError:
                         await solved.report_good()
                         passed = True
                     else:
                         passed = False
-
 
         await asyncio.sleep(settings.delay_after_click)
 
@@ -131,7 +138,9 @@ async def scraper(
                 # Wait for the webpage to load completely
                 await page.wait_for_load_state("load")
 
-                buttons: list = await page.locator("div#divDetalles button").all()
+                buttons: list = await page.locator(
+                    "div#divDetalles button"
+                ).all()
                 buttons_length: int = len(buttons)
                 i += 1
     finally:

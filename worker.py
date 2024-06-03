@@ -5,7 +5,7 @@ import math
 from collections.abc import Awaitable, Callable
 from uuid import UUID, uuid4
 
-from playwright.async_api import Browser, async_playwright, TimeoutError
+from playwright.async_api import Browser, TimeoutError, async_playwright
 
 from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi
@@ -95,8 +95,8 @@ async def worker(
 
                 except TimeoutError:
                     logger.debug(f"Worker {worker_id} timed out.")
+                    input_queue.task_done()
                     if input_values is not None:
-                        input_queue.task_done()
                         await input_queue.put(input_values)
                         await cancelled_workers_queue.put(True)
 
@@ -106,8 +106,8 @@ async def worker(
                         f"Worker {worker_id} ended with an exception."
                     )
                     logger.debug("Exception: ", exc_info=err)
+                    input_queue.task_done()
                     if input_values is not None:
-                        input_queue.task_done()
                         await input_queue.put(input_values)
                         await cancelled_workers_queue.put(True)
                 finally:
@@ -117,14 +117,11 @@ async def worker(
 
     except asyncio.CancelledError:
         logger.debug(f"Worker {worker_id} was cancelled.")
-        if (
-            task_done is not None
-            and not task_done
-            and input_values is not None
-        ):
+        if task_done is not None and not task_done:
             input_queue.task_done()
-            await input_queue.put(input_values)
-            await cancelled_workers_queue.put(True)
+            if input_values is not None:
+                await input_queue.put(input_values)
+                await cancelled_workers_queue.put(True)
         # Close the browser
         if browser is not None and browser.is_connected():
             await browser.close()
