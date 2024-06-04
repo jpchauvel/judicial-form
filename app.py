@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 -X tracemalloc=25
+#!/usr/bin/env python3
 import asyncio
 import logging
 import tracemalloc
