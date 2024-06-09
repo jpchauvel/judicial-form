@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 from typing import Self
 
 from evpn import ExpressVpnApi
@@ -23,10 +24,8 @@ class AsyncExpressVpnApi:
         while not passed:
             try:
                 self.logger.debug("Rotating VPN...")
-                await asyncio.to_thread(
-                    self.api.connect, get_random_location(self.api)
-                )
-                await asyncio.sleep(5)
+                self.api.connect(get_random_location(self.api))
+                time.sleep(5)
             except Exception:
                 self.logger.debug("Failed to rotate VPN. Retrying...")
                 self.api: ExpressVpnApi = ExpressVpnApi()

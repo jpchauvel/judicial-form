@@ -10,27 +10,62 @@ from playwright.async_api import Browser, TimeoutError, async_playwright
 from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi
 
-_num_workers: int = 0
-
-
-def set_num_workers(num_workers: int) -> None:
-    global _num_workers
-    _num_workers = num_workers
+_workers: dict[UUID, tuple[bool, BaseException | None]] = {}
 
 
 def get_num_workers() -> int:
-    global _num_workers
-    return _num_workers
+    global _workers
+    return len(_workers)
 
 
-def decrease_num_workers() -> None:
-    global _num_workers
-    _num_workers -= 1
+def remove_worker(worker_id: UUID) -> None:
+    global _workers
+    del _workers[worker_id]
+
+
+def reset_worker(worker_id: UUID) -> None:
+    global _workers
+    _workers[worker_id] = (False, None)
+
+
+def set_worker_exception(worker_id: UUID, exception: BaseException) -> None:
+    global _workers
+    _workers[worker_id] = (False, exception)
+
+
+def set_worker_done(worker_id: UUID) -> None:
+    global _workers
+    _workers[worker_id] = (True, None)
+
+
+def add_worker(
+    input_queue: asyncio.Queue[tuple[str, str]],
+    sync_workers_event: asyncio.Event,
+    progress_bar_event: asyncio.Event,
+    output_file: str,
+    logger: logging.Logger,
+    scraper: Callable[..., Awaitable[None]],
+) -> asyncio.Task[None]:
+    global _workers
+    worker_id: UUID = uuid4()
+    reset_worker(worker_id)
+    task: asyncio.Task[None] = asyncio.create_task(
+        coro=worker(
+            worker_id=worker_id,
+            input_queue=input_queue,
+            sync_workers_event=sync_workers_event,
+            progress_bar_event=progress_bar_event,
+            output_file=output_file,
+            logger=logger,
+            scraper=scraper,
+        )
+    )
+    return task
 
 
 async def sync_workers(
     vpn_api: AsyncExpressVpnApi,
-    cancelled_workers_queue: asyncio.Queue[bool],
+    input_queue: asyncio.Queue[tuple[str, str]],
     sync_workers_event: asyncio.Event,
     logger: logging.Logger,
 ) -> None:
@@ -42,12 +77,17 @@ async def sync_workers(
         while count >= threshold:
             sync_workers_event.set()
             sync_workers_event.clear()
-            try:
-                if cancelled_workers_queue.get_nowait():
+            for task_done, err in _workers.values():
+                if not task_done and err is not None:
                     count -= 1
-                    cancelled_workers_queue.task_done()
-            except asyncio.QueueEmpty:
-                pass
+            await asyncio.sleep(0.1)
+        pending_tasks: bool = True
+        while pending_tasks and not input_queue.empty():
+            pending_tasks = False
+            for task_done, err in _workers.values():
+                if not task_done and err is None:
+                    pending_tasks = True
+                    break
             await asyncio.sleep(0.1)
         logger.debug(
             f"Threshold reached."
@@ -60,8 +100,8 @@ async def sync_workers(
 
 
 async def worker(
+    worker_id: UUID,
     input_queue: asyncio.Queue[tuple[str, str]],
-    cancelled_workers_queue: asyncio.Queue[bool],
     sync_workers_event: asyncio.Event,
     progress_bar_event: asyncio.Event,
     output_file: str,
@@ -71,7 +111,6 @@ async def worker(
     input_values: tuple[str, str] | None = None
     browser: Browser | None = None
     task_done: bool | None = None
-    worker_id: UUID = uuid4()
     logger.debug(f"Worker {worker_id} started.")
     try:
         settings: Settings = get_settings()
@@ -82,6 +121,7 @@ async def worker(
                     task_done = False
                     await sync_workers_event.wait()  # Wait for syncrhonization event
                     input_values = await input_queue.get()
+                    reset_worker(worker_id)
 
                     await scraper(browser, output_file, *input_values)
 
@@ -92,13 +132,14 @@ async def worker(
                     progress_bar_event.set()
                     input_queue.task_done()
                     task_done = True
+                    set_worker_done(worker_id)
 
-                except TimeoutError:
+                except TimeoutError as err:
                     logger.debug(f"Worker {worker_id} timed out.")
                     input_queue.task_done()
                     if input_values is not None:
-                        await input_queue.put(input_values)
-                        await cancelled_workers_queue.put(True)
+                        input_queue.put_nowait(input_values)
+                        set_worker_exception(worker_id, err)
 
                 except Exception as err:
                     # FIXME: Catchall exception
@@ -108,22 +149,22 @@ async def worker(
                     logger.debug("Exception: ", exc_info=err)
                     input_queue.task_done()
                     if input_values is not None:
-                        await input_queue.put(input_values)
-                        await cancelled_workers_queue.put(True)
+                        input_queue.put_nowait(input_values)
+                        set_worker_exception(worker_id, err)
                 finally:
                     if settings.with_garbage_collection:
                         logger.debug("Garbage collection initiated...")
                         gc.collect()
 
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as err:
         logger.debug(f"Worker {worker_id} was cancelled.")
         if task_done is not None and not task_done:
             input_queue.task_done()
             if input_values is not None:
-                await input_queue.put(input_values)
-                await cancelled_workers_queue.put(True)
+                input_queue.put_nowait(input_values)
+                set_worker_exception(worker_id, err)
         # Close the browser
         if browser is not None and browser.is_connected():
             await browser.close()
-        decrease_num_workers()
+        remove_worker(worker_id)
         raise asyncio.CancelledError

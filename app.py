@@ -12,7 +12,7 @@ from conf import Settings, get_settings
 from expressvpn import AsyncExpressVpnApi
 from scraper import scraper
 from util import get_year, write_header_to_csv
-from worker import set_num_workers, sync_workers, worker
+from worker import add_worker, sync_workers
 
 # Configure the root logger
 logger: logging.Logger = logging.getLogger(__name__)
@@ -88,7 +88,6 @@ async def main(
 
     now: int = get_year(until_year)
     input_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
-    cancelled_workers_queue: asyncio.Queue[bool] = asyncio.Queue()
     sync_workers_event: asyncio.Event = asyncio.Event()
     progress_bar_event: asyncio.Event = asyncio.Event()
 
@@ -101,26 +100,21 @@ async def main(
 
         # Start workers
         for _ in range(num_workers):
-            worker_task: asyncio.Task[None] = asyncio.create_task(
-                coro=worker(
-                    input_queue=input_queue,
-                    cancelled_workers_queue=cancelled_workers_queue,
-                    sync_workers_event=sync_workers_event,
-                    progress_bar_event=progress_bar_event,
-                    output_file=output_file,
-                    logger=logger,
-                    scraper=scraper,
-                )
+            worker_task: asyncio.Task[None] = add_worker(
+                input_queue=input_queue,
+                sync_workers_event=sync_workers_event,
+                progress_bar_event=progress_bar_event,
+                output_file=output_file,
+                logger=logger,
+                scraper=scraper,
             )
             tasks.append(worker_task)
-
-        set_num_workers(num_workers)
 
         # Start the worker synchronizer
         sync_workers_task: asyncio.Task[None] = asyncio.create_task(
             coro=sync_workers(
+                input_queue=input_queue,
                 vpn_api=vpn_api,
-                cancelled_workers_queue=cancelled_workers_queue,
                 sync_workers_event=sync_workers_event,
                 logger=logger,
             )
@@ -137,9 +131,8 @@ async def main(
             )
             tasks.append(progress_bar_task)
 
-        # Wait until the queues are fully processed
+        # Wait until the queue is fully processed
         await input_queue.join()
-        await cancelled_workers_queue.join()
 
         for task in tasks:
             task.cancel()
