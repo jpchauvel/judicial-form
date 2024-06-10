@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     debug: bool = False
     with_memory_profiler: bool = False
     memory_profiler_frequency_in_seconds: int = 0
+    vpn_regions: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     @property
     def anti_captcha_api_key(self) -> str:
         return self._anti_captcha_api_key
+
+    @property
+    def vpn_region_list(self) -> list[str]:
+        return self.vpn_regions.split(",")
 
 
 @lru_cache

@@ -95,7 +95,9 @@ async def main(
         for i in range(document_range):
             input_queue.put_nowait((str(document_number_start + i), str(year)))
 
-    async with AsyncExpressVpnApi(logger=logger) as vpn_api:
+    async with AsyncExpressVpnApi(
+        logger=logger, vpn_regions=settings.vpn_region_list
+    ) as vpn_api:
         await vpn_api.rotate_vpn()  # First rotation
 
         # Start workers
