@@ -18,11 +18,6 @@ def get_num_workers() -> int:
     return len(_workers)
 
 
-def remove_worker(worker_id: UUID) -> None:
-    global _workers
-    del _workers[worker_id]
-
-
 def reset_worker(worker_id: UUID) -> None:
     global _workers
     _workers[worker_id] = (False, None)
@@ -71,6 +66,7 @@ async def sync_workers(
 ) -> None:
     logger.debug("Worker synchronizer started.")
     settings: Settings = get_settings()
+    num_workers: int = get_num_workers()
     count: int = get_num_workers()
     threshold: int = math.ceil(count * settings.threshold)
     while True:
@@ -94,7 +90,7 @@ async def sync_workers(
             f" Total workers remaining: {get_num_workers()}."
             f" Threshold: {threshold}."
         )
-        count: int = get_num_workers()
+        count: int = num_workers
         threshold: int = math.ceil(count * settings.threshold)
         await vpn_api.rotate_vpn()  # Rotate VPN
 
@@ -156,5 +152,4 @@ async def worker(
         # Close the browser
         if browser is not None and browser.is_connected():
             await browser.close()
-        remove_worker(worker_id)
         raise asyncio.CancelledError
