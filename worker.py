@@ -110,7 +110,6 @@ async def worker(
 ) -> None:
     input_values: tuple[str, str] | None = None
     browser: Browser | None = None
-    task_done: bool | None = None
     logger.debug(f"Worker {worker_id} started.")
     try:
         settings: Settings = get_settings()
@@ -118,7 +117,6 @@ async def worker(
             browser = await p.firefox.launch(headless=settings.headless)
             while True:
                 try:
-                    task_done = False
                     await sync_workers_event.wait()  # Wait for syncrhonization event
                     input_values = await input_queue.get()
                     reset_worker(worker_id)
@@ -130,16 +128,13 @@ async def worker(
                         f" {[x for x in input_values]}."
                     )
                     progress_bar_event.set()
-                    input_queue.task_done()
-                    task_done = True
                     set_worker_done(worker_id)
 
                 except TimeoutError as err:
                     logger.debug(f"Worker {worker_id} timed out.")
-                    input_queue.task_done()
                     if input_values is not None:
-                        input_queue.put_nowait(input_values)
                         set_worker_exception(worker_id, err)
+                        await input_queue.put(input_values)
 
                 except Exception as err:
                     # FIXME: Catchall exception
@@ -147,22 +142,17 @@ async def worker(
                         f"Worker {worker_id} ended with an exception."
                     )
                     logger.debug("Exception: ", exc_info=err)
-                    input_queue.task_done()
                     if input_values is not None:
-                        input_queue.put_nowait(input_values)
                         set_worker_exception(worker_id, err)
+                        await input_queue.put(input_values)
                 finally:
+                    input_queue.task_done()
                     if settings.with_garbage_collection:
                         logger.debug("Garbage collection initiated...")
                         gc.collect()
 
     except asyncio.CancelledError as err:
         logger.debug(f"Worker {worker_id} was cancelled.")
-        if task_done is not None and not task_done:
-            input_queue.task_done()
-            if input_values is not None:
-                input_queue.put_nowait(input_values)
-                set_worker_exception(worker_id, err)
         # Close the browser
         if browser is not None and browser.is_connected():
             await browser.close()
