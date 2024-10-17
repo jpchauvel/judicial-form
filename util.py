@@ -39,11 +39,18 @@ def clean_parties(data: str) -> list[str]:
         if item_stripped == "":
             continue
         row_to_list.append(item_stripped)
+    if row_to_list[10] == "DEMANDADO":
+        return [
+            f"{row_to_list[7]} {row_to_list[8]} {row_to_list[9]}",  # defendant
+            f"{row_to_list[12]} {row_to_list[13]} {row_to_list[14]}"
+            if len(row_to_list) > 14
+            else row_to_list[12],  # plaintiff
+        ]
     return [
-        f"{row_to_list[7]} {row_to_list[8]} {row_to_list[9]}",  # plaintiff
+        row_to_list[7],  # plaintiff
         f"{row_to_list[10]} {row_to_list[11]} {row_to_list[12]}"
         if len(row_to_list) > 12
-        else "",  # defendant
+        else row_to_list[10],  # defendant
     ]
 
 
