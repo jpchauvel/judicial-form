@@ -40,8 +40,10 @@ def clean_parties(data: str) -> list[str]:
             continue
         row_to_list.append(item_stripped)
     return [
-        row_to_list[7],  # plaintiff
-        row_to_list[10] if len(row_to_list) > 10 else "",  # defendant
+        f"{row_to_list[7]} {row_to_list[8]} {row_to_list[9]}",  # plaintiff
+        f"{row_to_list[10]} {row_to_list[11]} {row_to_list[12]}"
+        if len(row_to_list) > 12
+        else "",  # defendant
     ]
 
 
