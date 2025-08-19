@@ -3,6 +3,7 @@ name = "playwright-test"
 version = "0.1.0"
 description = "Peruvian Judicial Form By-Pass Proof-of-Concept"
 authors = ["Jean-Pierre Chauvel <jean.p.chauvel@gmail.com>"]
+licence = "CC0"
 readme = "README.md"
 
 [tool.poetry.dependencies]
